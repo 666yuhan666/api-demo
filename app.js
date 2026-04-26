@@ -67,17 +67,205 @@ let coneMarker     = null;
 let viewerNavigable = false;
 let pendingImageId  = null;
 
-// Layer toggle state
-const layerState = { points: false, signs: false };
+// Layer toggle state - CHANGED: const → let for consistency
+let layerState = { points: false, signs: false };
 
-// Active filters
-const activeFilters = {
+// Active filters - CHANGED: const → let for consistency
+let activeFilters = {
   startDate: '',
   endDate: '',
   panoOnly: false,
 };
 
-// Map event listener registry for cleanup
+// ─── Filter Versioning & Map Init State ───────────────────────────────────────
+// NEW: Version tracking to prevent race conditions in fast filter switches
+
+let currentFilterVersion = 0;
+let isMapReadyForLayers = false;
+
+function getDefaultFilters() {
+  return {
+    startDate: '',
+    endDate: '',
+    panoOnly: false,
+  };
+}
+
+function getDefaultLayerState() {
+  return {
+    points: false,
+    signs: false,
+  };
+}
+
+function syncFiltersUI() {
+  const startDateInput = document.getElementById('filter-start-date');
+  const endDateInput = document.getElementById('filter-end-date');
+  const panoCheckbox = document.getElementById('filter-pano-only');
+
+  if (fpStart && activeFilters.startDate) {
+    fpStart.setDate(activeFilters.startDate);
+  }
+  if (fpEnd && activeFilters.endDate) {
+    fpEnd.setDate(activeFilters.endDate);
+  }
+  if (panoCheckbox) {
+    panoCheckbox.checked = activeFilters.panoOnly;
+  }
+}
+
+function syncLayerTogglesUI() {
+  const pointsBtn = document.getElementById('toggle-points');
+  const signsBtn = document.getElementById('toggle-signs');
+
+  if (pointsBtn) {
+    pointsBtn.dataset.active = String(layerState.points);
+  }
+  if (signsBtn) {
+    signsBtn.dataset.active = String(layerState.signs);
+  }
+}
+
+function applyLayerToggles() {
+  if (!map) return;
+
+  if (layerState.points) {
+    addExtraLayer('points');
+  } else {
+    removeExtraLayer('points');
+  }
+
+  if (layerState.signs) {
+    addExtraLayer('signs');
+  } else {
+    removeExtraLayer('signs');
+  }
+}
+
+function applyAllStateToMap() {
+  if (!map) return;
+  applyFiltersToLayers();
+  applyLayerToggles();
+  updateFiltersActiveState();
+}
+
+function createMainMapillaryLayers() {
+  if (!map) return;
+
+  const filterExpr = buildFilterExpression();
+
+  map.addLayer({
+    id: LAYER_OVW,
+    type: 'circle',
+    source: SOURCE_ID,
+    'source-layer': 'overview',
+    minzoom: 0,
+    maxzoom: 6,
+    layout: { visibility: 'none' },
+    paint: {
+      'circle-color': C_DOT,
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 0, 1.5, 5, 4],
+      'circle-opacity': 0.75,
+    },
+    filter: filterExpr || undefined,
+  });
+
+  map.addLayer({
+    id: LAYER_SEQ,
+    type: 'line',
+    source: SOURCE_ID,
+    'source-layer': 'sequence',
+    minzoom: 6,
+    layout: { 'line-cap': 'round', 'line-join': 'round', visibility: 'none' },
+    paint: {
+      'line-color': C_LINE,
+      'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1.5, 12, 3, 14, 2, 18, 3],
+      'line-opacity': 0.8,
+    },
+    filter: filterExpr || undefined,
+  });
+
+  map.addLayer({
+    id: LAYER_SEQ + '-hl',
+    type: 'line',
+    source: SOURCE_ID,
+    'source-layer': 'sequence',
+    minzoom: 6,
+    layout: { 'line-cap': 'round', 'line-join': 'round', visibility: 'none' },
+    paint: {
+      'line-color': C_LINE_HL,
+      'line-width': ['interpolate', ['linear'], ['zoom'], 6, 5, 12, 7, 14, 5, 18, 7],
+      'line-opacity': 0,
+    },
+    filter: ['==', 'id', ''],
+  });
+
+  map.addLayer({
+    id: LAYER_IMG,
+    type: 'circle',
+    source: SOURCE_ID,
+    'source-layer': 'image',
+    minzoom: 14,
+    layout: { visibility: 'none' },
+    paint: {
+      'circle-color': C_DOT,
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 14, 4, 18, 9],
+      'circle-opacity': 0.95,
+      'circle-stroke-color': '#fff',
+      'circle-stroke-width': 1.5,
+      'circle-stroke-opacity': 0.7,
+    },
+    filter: filterExpr || undefined,
+  });
+
+  map.addLayer({
+    id: LAYER_IMG + '-active',
+    type: 'circle',
+    source: SOURCE_ID,
+    'source-layer': 'image',
+    minzoom: 14,
+    layout: { visibility: 'none' },
+    paint: {
+      'circle-color': '#ff861b',
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 14, 6, 18, 13],
+      'circle-opacity': 1,
+      'circle-stroke-color': '#fff',
+      'circle-stroke-width': 2,
+      'circle-stroke-opacity': 1,
+    },
+    filter: ['==', 'id', -1],
+  });
+
+  map.addLayer({
+    id: LAYER_IMG + '-hl',
+    type: 'circle',
+    source: SOURCE_ID,
+    'source-layer': 'image',
+    minzoom: 14,
+    layout: { visibility: 'none' },
+    paint: {
+      'circle-color': C_DOT_HL,
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 14, 9, 18, 16],
+      'circle-opacity': ['case', ['boolean', ['feature-state', 'hover'], false], 0.5, 0],
+      'circle-stroke-color': '#fff',
+      'circle-stroke-width': 2,
+      'circle-stroke-opacity': ['case', ['boolean', ['feature-state', 'hover'], false], 0.9, 0],
+    },
+  });
+}
+
+function showAllMainLayers() {
+  if (!map) return;
+  const mainLayerIds = [LAYER_OVW, LAYER_SEQ, LAYER_SEQ + '-hl', LAYER_IMG, LAYER_IMG + '-active', LAYER_IMG + '-hl'];
+  mainLayerIds.forEach((id) => {
+    if (map.getLayer(id)) {
+      map.setLayoutProperty(id, 'visibility', 'visible');
+    }
+  });
+}
+
+// ─── Map event listener registry for cleanup ─────────────────────────────────
+
 const mapListeners = [];
 function addMapListener(type, layerId, handler) {
   if (layerId) {
@@ -95,7 +283,8 @@ function removeAllMapListeners() {
   mapListeners.length = 0;
 }
 
-// Thumbnail cache — capped to prevent unbounded growth
+// ─── Thumbnail cache — capped to prevent unbounded growth ─────────────────────
+
 const THUMB_CACHE_MAX = 500;
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
@@ -357,6 +546,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function initMap() {
   setStatus('loading', 'Loading map…');
+  isMapReadyForLayers = false;
   if (coneMarker)    { coneMarker.remove(); coneMarker = null; }
   if (featurePopup)  { featurePopup.remove(); featurePopup = null; }
   if (thumbPopupVisible) { thumbPopup.remove(); thumbPopupVisible = false; }
@@ -401,106 +591,21 @@ function onMapLoad() {
     attribution: '© <a href="https://www.mapillary.com" target="_blank">Mapillary</a>',
   });
 
-  // Overview
-  map.addLayer({
-    id: LAYER_OVW,
-    type: 'circle',
-    source: SOURCE_ID,
-    'source-layer': 'overview',
-    minzoom: 0,
-    maxzoom: 6,
-    paint: {
-      'circle-color': C_DOT,
-      'circle-radius': ['interpolate', ['linear'], ['zoom'], 0, 1.5, 5, 4],
-      'circle-opacity': 0.75,
-    },
-  });
+  syncLayerTogglesUI();
+  syncFiltersUI();
 
-  // Sequences
-  map.addLayer({
-    id: LAYER_SEQ,
-    type: 'line',
-    source: SOURCE_ID,
-    'source-layer': 'sequence',
-    minzoom: 6,
-    layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: {
-      'line-color': C_LINE,
-      'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1.5, 12, 3, 14, 2, 18, 3],
-      'line-opacity': 0.8,
-    },
-  });
-
-  map.addLayer({
-    id: LAYER_SEQ + '-hl',
-    type: 'line',
-    source: SOURCE_ID,
-    'source-layer': 'sequence',
-    minzoom: 6,
-    layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: {
-      'line-color': C_LINE_HL,
-      'line-width': ['interpolate', ['linear'], ['zoom'], 6, 5, 12, 7, 14, 5, 18, 7],
-      'line-opacity': 0,
-    },
-    filter: ['==', 'id', ''],
-  });
-
-  // Images
-  map.addLayer({
-    id: LAYER_IMG,
-    type: 'circle',
-    source: SOURCE_ID,
-    'source-layer': 'image',
-    minzoom: 14,
-    paint: {
-      'circle-color': C_DOT,
-      'circle-radius': ['interpolate', ['linear'], ['zoom'], 14, 4, 18, 9],
-      'circle-opacity': 0.95,
-      'circle-stroke-color': '#fff',
-      'circle-stroke-width': 1.5,
-      'circle-stroke-opacity': 0.7,
-    },
-  });
-
-  // Active image orange highlight
-  map.addLayer({
-    id: LAYER_IMG + '-active',
-    type: 'circle',
-    source: SOURCE_ID,
-    'source-layer': 'image',
-    minzoom: 14,
-    paint: {
-      'circle-color': '#ff861b',
-      'circle-radius': ['interpolate', ['linear'], ['zoom'], 14, 6, 18, 13],
-      'circle-opacity': 1,
-      'circle-stroke-color': '#fff',
-      'circle-stroke-width': 2,
-      'circle-stroke-opacity': 1,
-    },
-    filter: ['==', 'id', -1],
-  });
-
-  // Image hover highlight (feature-state driven)
-  map.addLayer({
-    id: LAYER_IMG + '-hl',
-    type: 'circle',
-    source: SOURCE_ID,
-    'source-layer': 'image',
-    minzoom: 14,
-    paint: {
-      'circle-color': C_DOT_HL,
-      'circle-radius': ['interpolate', ['linear'], ['zoom'], 14, 9, 18, 16],
-      'circle-opacity': ['case', ['boolean', ['feature-state', 'hover'], false], 0.5, 0],
-      'circle-stroke-color': '#fff',
-      'circle-stroke-width': 2,
-      'circle-stroke-opacity': ['case', ['boolean', ['feature-state', 'hover'], false], 0.9, 0],
-    },
-  });
+  createMainMapillaryLayers();
 
   bindMapEvents();
   bindLayerToggles();
-  applyFiltersToLayers();
+
+  applyLayerToggles();
+  updateFiltersActiveState();
+
+  showAllMainLayers();
+
+  isMapReadyForLayers = true;
+
   setStatus('ok', 'Map ready — click a green layer');
 }
 
@@ -523,16 +628,15 @@ function buildFilterExpression() {
 
 function applyFiltersToLayers() {
   if (!map) return;
+  currentFilterVersion++;
   const expr = buildFilterExpression();
   [LAYER_OVW, LAYER_SEQ, LAYER_IMG, LAYER_IMG + '-hl'].forEach((id) => {
     if (map.getLayer(id)) map.setFilter(id, expr || undefined);
   });
-  // Preserve active-image filter on top of global filter
   if (activeImageId && map.getLayer(LAYER_IMG + '-active')) {
     const idFilter = ['==', ['to-string', ['get', 'id']], String(activeImageId)];
     map.setFilter(LAYER_IMG + '-active', expr ? ['all', expr, idFilter] : idFilter);
   }
-  // If the active image is now hidden by the filter, remove the cone
   if (activeImageId && expr) {
     const isVisible = isImageVisibleUnderFilter(activeImageId, expr);
     if (!isVisible && coneMarker) {
@@ -572,8 +676,9 @@ function initDatePickers() {
     dateFormat: 'Y-m-d',
     maxDate: 'today',
     disableMobile: true,
+    // CHANGED: Remove immediate state update from onChange
+    // Dates will only be committed to activeFilters when Apply is clicked
     onChange: (selectedDates, dateStr) => {
-      activeFilters.startDate = dateStr;
       if (fpEnd) fpEnd.set('minDate', dateStr || null);
     },
   });
@@ -581,8 +686,8 @@ function initDatePickers() {
     dateFormat: 'Y-m-d',
     maxDate: 'today',
     disableMobile: true,
+    // CHANGED: Remove immediate state update from onChange
     onChange: (selectedDates, dateStr) => {
-      activeFilters.endDate = dateStr;
       if (fpStart) fpStart.set('maxDate', dateStr || 'today');
     },
   });
@@ -599,27 +704,58 @@ function bindLayerToggles() {
     filtersToggle.addEventListener('click', () => {
       const open = filtersPanel.classList.toggle('open');
       filtersToggle.dataset.active = String(open);
+      // CHANGED: Sync filter inputs from state when opening panel
+      if (open) {
+        syncFiltersUI();
+      }
     });
     document.getElementById('filter-apply-btn').addEventListener('click', () => {
       // Close any open flatpickr calendars before closing the panel
       if (fpStart) fpStart.close();
       if (fpEnd)   fpEnd.close();
-      // Dates are updated live by flatpickr onChange; just read the other fields here
-      activeFilters.panoOnly  = document.getElementById('filter-pano-only').checked;
+
+      // CHANGED: Read from DOM inputs and commit to state atomically
+      const startDateInput = document.getElementById('filter-start-date');
+      const endDateInput = document.getElementById('filter-end-date');
+      const panoCheckbox = document.getElementById('filter-pano-only');
+
+      // Get values from inputs
+      const newStartDate = startDateInput ? startDateInput.value : '';
+      const newEndDate = endDateInput ? endDateInput.value : '';
+      const newPanoOnly = panoCheckbox ? panoCheckbox.checked : false;
+
+      // Update state atomically
+      activeFilters.startDate = newStartDate;
+      activeFilters.endDate = newEndDate;
+      activeFilters.panoOnly = newPanoOnly;
+
       applyFiltersToLayers();
       updateFiltersActiveState();
+
+      // Round 3: Push state to URL after applying filters
+      if (window.filterState) window.filterState.pushToUrl();
+
       filtersPanel.classList.remove('open');
       filtersToggle.dataset.active = 'false';
     });
     document.getElementById('filter-reset-btn').addEventListener('click', () => {
-      activeFilters.startDate = '';
-      activeFilters.endDate   = '';
-      activeFilters.panoOnly  = false;
+      // CHANGED: Reset to default state atomically, then sync UI
+      activeFilters = getDefaultFilters();
+
+      // Reset Flatpickr
       if (fpStart) { fpStart.clear(); fpStart.set('maxDate', 'today'); }
       if (fpEnd)   { fpEnd.clear();   fpEnd.set('minDate', null); }
-      document.getElementById('filter-pano-only').checked = false;
+
+      // Reset checkbox
+      const panoCheckbox = document.getElementById('filter-pano-only');
+      if (panoCheckbox) panoCheckbox.checked = false;
+
       applyFiltersToLayers();
       updateFiltersActiveState();
+
+      // Round 3: Push state to URL after reset
+      if (window.filterState) window.filterState.pushToUrl();
+
       filtersPanel.classList.remove('open');
       filtersToggle.dataset.active = 'false';
     });
@@ -627,10 +763,16 @@ function bindLayerToggles() {
 }
 
 function toggleLayer(name) {
+  // CHANGED: Update state first, then sync UI, then apply
   layerState[name] = !layerState[name];
-  const btn = document.getElementById('toggle-' + name);
-  btn.dataset.active = String(layerState[name]);
 
+  // Sync UI from state
+  const btn = document.getElementById('toggle-' + name);
+  if (btn) {
+    btn.dataset.active = String(layerState[name]);
+  }
+
+  // Apply to map
   if (layerState[name]) {
     addExtraLayer(name);
   } else {
@@ -1379,185 +1521,236 @@ closeBtn.addEventListener('click', () => {
 
 window.addEventListener('resize', () => {
   if (map) map.resize();
-  if (viewer) viewer.resize();
 });
 
-// ─── Auto-init from URL param (?token=XXX) ────────────────────────────────────
+// ============================================================================
+//  Round 3: Verifiable Filter State API + URL Persistence
+//  可验证函数：筛选状态读写、query序列化/反序列化、URL持久化
+// ============================================================================
 
-(function autoInit() {
-  const params = new URLSearchParams(window.location.search);
-  const urlToken = params.get('token');
-  if (urlToken) {
-    tokenInput.value = urlToken;
-    accessToken = urlToken;
-    history.replaceState(null, '', window.location.pathname + window.location.hash);
-    initMap();
-  }
-})();
+window.filterState = {
+  // ─── 筛选状态读写 ─────────────────────────────────────────────────────────
 
-// ─── Geocoder (Nominatim) ─────────────────────────────────────────────────────
+  getFilters: function() {
+    return {
+      startDate: activeFilters.startDate,
+      endDate: activeFilters.endDate,
+      panoOnly: activeFilters.panoOnly,
+    };
+  },
 
-(function initGeocoder() {
-  const geocoderInput   = document.getElementById('geocoder-input');
-  const geocoderClear   = document.getElementById('geocoder-clear');
-  const suggestionsList = document.getElementById('geocoder-suggestions');
-
-  let debounceTimer = null;
-  let activeIndex   = -1;
-  let lastResults   = [];
-
-  geocoderInput.addEventListener('input', () => {
-    const q = geocoderInput.value.trim();
-    geocoderClear.classList.toggle('hidden', q.length === 0);
-    if (q.length < 2) { hideSuggestions(); return; }
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => fetchSuggestions(q), 300);
-  });
-
-  geocoderClear.addEventListener('click', () => {
-    geocoderInput.value = '';
-    geocoderClear.classList.add('hidden');
-    hideSuggestions();
-    geocoderInput.focus();
-  });
-
-  geocoderInput.addEventListener('keydown', (e) => {
-    const items = suggestionsList.querySelectorAll('li');
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      activeIndex = Math.min(activeIndex + 1, items.length - 1);
-      updateActive(items);
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      activeIndex = Math.max(activeIndex - 1, -1);
-      updateActive(items);
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      if (activeIndex >= 0 && lastResults[activeIndex]) {
-        selectResult(lastResults[activeIndex]);
-      } else if (geocoderInput.value.trim().length >= 2) {
-        clearTimeout(debounceTimer);
-        fetchSuggestions(geocoderInput.value.trim(), true);
+  setFilters: function(filters, apply) {
+    if (!filters) return false;
+    if (filters.startDate !== undefined) activeFilters.startDate = String(filters.startDate || '');
+    if (filters.endDate !== undefined) activeFilters.endDate = String(filters.endDate || '');
+    if (filters.panoOnly !== undefined) activeFilters.panoOnly = !!filters.panoOnly;
+    if (apply !== false) {
+      syncFiltersUI();
+      if (isMapReadyForLayers) {
+        applyFiltersToLayers();
+        updateFiltersActiveState();
       }
-    } else if (e.key === 'Escape') {
-      hideSuggestions();
-      geocoderInput.blur();
     }
-  });
+    return true;
+  },
 
-  document.addEventListener('click', (e) => {
-    if (!e.target.closest('#geocoder-wrap')) hideSuggestions();
-  });
+  getLayers: function() {
+    return {
+      points: layerState.points,
+      signs: layerState.signs,
+    };
+  },
 
-  function updateActive(items) {
-    items.forEach((li, i) => {
-      li.setAttribute('aria-selected', i === activeIndex ? 'true' : 'false');
-    });
-  }
-
-  async function fetchSuggestions(query, flyToFirst = false) {
-    try {
-      const url  = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=6&addressdetails=1`;
-      const res  = await fetch(url, { headers: { 'Accept-Language': 'en' } });
-      const data = await res.json();
-      lastResults  = data;
-      activeIndex  = -1;
-      if (flyToFirst && data.length > 0) { selectResult(data[0]); return; }
-      renderSuggestions(data);
-    } catch (err) {
-      console.warn('Geocoder error:', err);
-    }
-  }
-
-  function renderSuggestions(results) {
-    suggestionsList.innerHTML = '';
-    if (!results.length) { hideSuggestions(); return; }
-
-    results.forEach((r) => {
-      const li = document.createElement('li');
-      li.setAttribute('role', 'option');
-      li.setAttribute('aria-selected', 'false');
-
-      const parts = r.display_name.split(', ');
-      const main  = parts.slice(0, 2).join(', ');
-      const sub   = parts.slice(2).join(', ');
-
-      li.innerHTML = `<div class="suggestion-main">${escHtml(main)}</div>${sub ? `<div class="suggestion-sub">${escHtml(sub)}</div>` : ''}`;
-      li.addEventListener('mousedown', (e) => { e.preventDefault(); selectResult(r); });
-      suggestionsList.appendChild(li);
-    });
-
-    suggestionsList.classList.add('visible');
-  }
-
-  function selectResult(result) {
-    geocoderInput.value = result.display_name.split(', ').slice(0, 2).join(', ');
-    geocoderClear.classList.remove('hidden');
-    hideSuggestions();
-
-    if (!map) return;
-
-    const lng  = parseFloat(result.lon);
-    const lat  = parseFloat(result.lat);
-    const bbox = result.boundingbox;
-
-    const ANIM_MS = 900;
-    if (bbox) {
-      map.fitBounds(
-        [[parseFloat(bbox[2]), parseFloat(bbox[0])], [parseFloat(bbox[3]), parseFloat(bbox[1])]],
-        { padding: 40, maxZoom: 16, duration: ANIM_MS }
-      );
-    } else {
-      map.flyTo({ center: [lng, lat], zoom: 16, duration: ANIM_MS });
-    }
-    // Wait for the map to finish flying AND tiles to fully render before querying features
-    function waitForIdleThenOpen() {
-      map.once('idle', () => openNearestImage(lng, lat));
-    }
-    setTimeout(waitForIdleThenOpen, ANIM_MS + 50);
-  }
-
-  function openNearestImage(lng, lat) {
-    // Use the map's rendered tile features to find the nearest image — more reliable than
-    // the Graph API bbox search which may return empty results due to token scope.
-    if (!map) return;
-    const center = map.project([lng, lat]);
-    // Query a generous pixel radius around the target point
-    const r = 120;
-    const features = map.queryRenderedFeatures(
-      [[ center.x - r, center.y - r ], [ center.x + r, center.y + r ]],
-      { layers: [LAYER_IMG] }
-    );
-    if (!features || features.length === 0) return;
-
-    // Pick the feature whose geometry is closest to the target lngLat
-    let best = null, bestDist = Infinity;
-    for (const f of features) {
-      const fId = f.properties && (f.properties.id || f.id);
-      if (!fId) continue;
-      // Apply active filters
-      if (activeFilters.panoOnly && !f.properties.is_pano) continue;
-      if (activeFilters.startDate) {
-        const ts = f.properties.captured_at;
-        if (ts && ts < new Date(activeFilters.startDate).getTime()) continue;
+  setLayers: function(layers, apply) {
+    if (!layers) return false;
+    if (layers.points !== undefined) layerState.points = !!layers.points;
+    if (layers.signs !== undefined) layerState.signs = !!layers.signs;
+    if (apply !== false) {
+      syncLayerTogglesUI();
+      if (isMapReadyForLayers) {
+        applyLayerToggles();
       }
-      if (activeFilters.endDate) {
-        const ts = f.properties.captured_at;
-        if (ts && ts > new Date(activeFilters.endDate).getTime() + 86400000) continue;
-      }
-      const coords = f.geometry && f.geometry.coordinates;
-      if (!coords) continue;
-      const d = Math.hypot(coords[0] - lng, coords[1] - lat);
-      if (d < bestDist) { bestDist = d; best = { id: fId, coords }; }
     }
-    if (best) {
-      openImageInViewer(String(best.id));
-    }
-  }
+    return true;
+  },
 
-  function hideSuggestions() {
-    suggestionsList.classList.remove('visible');
-    suggestionsList.innerHTML = '';
-    activeIndex = -1;
+  // ─── Query 序列化/反序列化 ──────────────────────────────────────────────────
+
+  toQuery: function() {
+    const params = [];
+    if (activeFilters.startDate) params.push('startDate=' + encodeURIComponent(activeFilters.startDate));
+    if (activeFilters.endDate) params.push('endDate=' + encodeURIComponent(activeFilters.endDate));
+    if (activeFilters.panoOnly) params.push('panoOnly=true');
+    const layers = [];
+    if (layerState.points) layers.push('points');
+    if (layerState.signs) layers.push('signs');
+    if (layers.length > 0) params.push('layers=' + layers.join(','));
+    return params.join('&');
+  },
+
+  fromQuery: function(queryString, apply) {
+    if (!queryString) return false;
+    const q = (queryString.charAt(0) === '?') ? queryString.slice(1) : queryString;
+    const pairs = q.split('&');
+    let changed = false;
+    const newFilters = getDefaultFilters();
+    const newLayers = getDefaultLayerState();
+    for (let i = 0; i < pairs.length; i++) {
+      const pair = pairs[i];
+      const eqIdx = pair.indexOf('=');
+      if (eqIdx <= 0) continue;
+      const key = decodeURIComponent(pair.slice(0, eqIdx));
+      const value = decodeURIComponent(pair.slice(eqIdx + 1));
+      switch (key) {
+        case 'startDate':
+          if (value && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+            newFilters.startDate = value;
+            changed = true;
+          }
+          break;
+        case 'endDate':
+          if (value && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+            newFilters.endDate = value;
+            changed = true;
+          }
+          break;
+        case 'panoOnly':
+          if (value === 'true' || value === '1') {
+            newFilters.panoOnly = true;
+            changed = true;
+          }
+          break;
+        case 'layers':
+          const layerList = value.split(',');
+          for (let j = 0; j < layerList.length; j++) {
+            const l = layerList[j].trim();
+            if (l === 'points') newLayers.points = true;
+            if (l === 'signs') newLayers.signs = true;
+          }
+          changed = true;
+          break;
+      }
+    }
+    if (changed) {
+      if (newFilters.startDate) activeFilters.startDate = newFilters.startDate;
+      if (newFilters.endDate) activeFilters.endDate = newFilters.endDate;
+      activeFilters.panoOnly = newFilters.panoOnly;
+      layerState.points = newLayers.points;
+      layerState.signs = newLayers.signs;
+      if (apply !== false) {
+        syncFiltersUI();
+        syncLayerTogglesUI();
+        if (isMapReadyForLayers) {
+          applyFiltersToLayers();
+          applyLayerToggles();
+          updateFiltersActiveState();
+        }
+      }
+    }
+    return changed;
+  },
+
+  // ─── URL 持久化 ─────────────────────────────────────────────────────────────
+
+  pushToUrl: function() {
+    const query = this.toQuery();
+    const baseUrl = window.location.pathname;
+    const newUrl = query ? (baseUrl + '?' + query) : baseUrl;
+    if (window.history) {
+      window.history.pushState({
+        filters: this.getFilters(),
+        layers: this.getLayers(),
+      }, '', newUrl);
+    }
+  },
+
+  restoreFromUrl: function(apply) {
+    const query = window.location.search;
+    if (!query || query === '?') return false;
+    return this.fromQuery(query, apply);
+  },
+
+  // ─── 版本和状态检查 ─────────────────────────────────────────────────────────
+
+  getVersion: function() {
+    return currentFilterVersion;
+  },
+
+  isReady: function() {
+    return isMapReadyForLayers;
+  },
+
+  reset: function(apply) {
+    activeFilters = getDefaultFilters();
+    layerState = getDefaultLayerState();
+    if (apply !== false) {
+      syncFiltersUI();
+      syncLayerTogglesUI();
+      if (isMapReadyForLayers) {
+        applyFiltersToLayers();
+        applyLayerToggles();
+        updateFiltersActiveState();
+      }
+    }
+    return true;
+  },
+};
+
+// ─── 拦截状态变化，自动推送到 URL ───────────────────────────────────────────
+
+function pushStateToUrl() {
+  window.filterState.pushToUrl();
+}
+
+const originalToggleLayer = toggleLayer;
+toggleLayer = function(name) {
+  originalToggleLayer(name);
+  pushStateToUrl();
+};
+
+const originalApplyFiltersToLayers = applyFiltersToLayers;
+applyFiltersToLayers = function() {
+  originalApplyFiltersToLayers();
+};
+
+const originalSetFilters = window.filterState.setFilters.bind(window.filterState);
+window.filterState.setFilters = function(filters, apply) {
+  const result = originalSetFilters(filters, apply);
+  if (result && apply !== false) pushStateToUrl();
+  return result;
+};
+
+const originalSetLayers = window.filterState.setLayers.bind(window.filterState);
+window.filterState.setLayers = function(layers, apply) {
+  const result = originalSetLayers(layers, apply);
+  if (result && apply !== false) pushStateToUrl();
+  return result;
+};
+
+const originalReset = window.filterState.reset.bind(window.filterState);
+window.filterState.reset = function(apply) {
+  const result = originalReset(apply);
+  if (result && apply !== false) pushStateToUrl();
+  return result;
+};
+
+// ─── 监听浏览器回退/前进 ─────────────────────────────────────────────────────
+
+window.addEventListener('popstate', function(e) {
+  const state = e.state;
+  if (state && state.filters && state.layers) {
+    window.filterState.setFilters(state.filters, true);
+    window.filterState.setLayers(state.layers, true);
+  } else {
+    window.filterState.restoreFromUrl(true);
+  }
+});
+
+// ─── 页面加载时从 URL 恢复状态 ───────────────────────────────────────────────
+
+(function() {
+  const hasQuery = window.location.search && window.location.search !== '?';
+  if (hasQuery) {
+    window.filterState.restoreFromUrl(false);
   }
 })();

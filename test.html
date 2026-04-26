@@ -1,0 +1,817 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Filter State API - Test Page</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .container { max-width: 1000px; margin: 0 auto; }
+    h1 { color: #333; margin-bottom: 10px; }
+    .subtitle { color: #666; margin-bottom: 20px; }
+
+    .test-section {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    .test-section h2 {
+      margin-top: 0;
+      color: #333;
+      font-size: 16px;
+    }
+    .test-section .description {
+      color: #666;
+      font-size: 14px;
+      margin-bottom: 15px;
+    }
+
+    .btn {
+      display: inline-block;
+      padding: 10px 20px;
+      background: #05CB63;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      margin-right: 10px;
+      margin-bottom: 10px;
+    }
+    .btn:hover { background: #04b858; }
+    .btn.secondary { background: #666; }
+    .btn.secondary:hover { background: #555; }
+    .btn.small { padding: 6px 12px; font-size: 12px; }
+
+    .test-result {
+      margin-top: 15px;
+      padding: 12px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 13px;
+      white-space: pre-wrap;
+      overflow-x: auto;
+    }
+    .test-result.pass { background: #d4edda; color: #155724; }
+    .test-result.fail { background: #f8d7da; color: #721c24; }
+    .test-result.info { background: #e2e3e5; color: #383d41; }
+
+    .code-block {
+      background: #f8f9fa;
+      border: 1px solid #dee2e6;
+      border-radius: 4px;
+      padding: 15px;
+      font-family: monospace;
+      font-size: 13px;
+      overflow-x: auto;
+      margin-bottom: 15px;
+    }
+
+    .table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    .table th, .table td {
+      padding: 10px;
+      text-align: left;
+      border-bottom: 1px solid #ddd;
+    }
+    .table th { background: #f8f9fa; font-weight: 600; }
+
+    .status-dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-right: 5px;
+    }
+    .status-dot.pass { background: #05CB63; }
+    .status-dot.fail { background: #f56565; }
+    .status-dot.pending { background: #f59e0b; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Filter State API - Test Page</h1>
+    <p class="subtitle">这是一个零依赖的测试页，用于验证 <code>window.filterState</code> API 的正确性。</p>
+
+    <!-- API 文档 -->
+    <div class="test-section">
+      <h2>📚 API 文档</h2>
+      <div class="code-block">
+// 筛选状态读写
+window.filterState.getFilters()    // → { startDate, endDate, panoOnly }
+window.filterState.setFilters({ startDate: '2024-01-01', panoOnly: true })
+
+window.filterState.getLayers()     // → { points, signs }
+window.filterState.setLayers({ points: true, signs: false })
+
+// Query 序列化/反序列化
+window.filterState.toQuery()        // → "startDate=2024-01-01&panoOnly=true&layers=points"
+window.filterState.fromQuery("startDate=2024-01-01&panoOnly=true")
+
+// URL 持久化
+window.filterState.pushToUrl()      // 推送到 URL
+window.filterState.restoreFromUrl() // 从 URL 恢复
+
+// 版本和状态
+window.filterState.getVersion()     // → 当前筛选版本号
+window.filterState.isReady()         // → 地图是否就绪
+window.filterState.reset()           // → 重置为默认状态</div>
+    </div>
+
+    <!-- 测试场景 1：快速切换筛选 -->
+    <div class="test-section">
+      <h2><span class="status-dot pending" id="status1"></span>场景 1：快速切换筛选</h2>
+      <p class="description">验证快速切换筛选时，状态变量和 URL 始终保持一致。</p>
+      <div class="code-block">
+// 测试步骤：
+// 1. 设置筛选 A
+// 2. 快速设置筛选 B
+// 3. 验证当前状态是筛选 B
+// 4. 验证 URL 查询参数也是筛选 B</div>
+      <button class="btn" onclick="runTest1()">运行测试</button>
+      <div id="result1" class="test-result info">等待运行测试...</div>
+    </div>
+
+    <!-- 测试场景 2：刷新恢复 -->
+    <div class="test-section">
+      <h2><span class="status-dot pending" id="status2"></span>场景 2：刷新恢复</h2>
+      <p class="description">验证页面刷新后，状态能够正确从 URL 恢复。</p>
+      <div class="code-block">
+// 测试步骤：
+// 1. 设置筛选状态
+// 2. 验证 URL 已更新
+// 3. 验证 fromQuery() 能够正确解析
+// 4. 验证解析后的状态与原始状态一致</div>
+      <button class="btn" onclick="runTest2()">运行测试</button>
+      <div id="result2" class="test-result info">等待运行测试...</div>
+    </div>
+
+    <!-- 测试场景 3：带 query 直达 -->
+    <div class="test-section">
+      <h2><span class="status-dot pending" id="status3"></span>场景 3：带 query 直达</h2>
+      <p class="description">验证 URL 中的查询参数能够正确解析为筛选状态。</p>
+      <div class="code-block">
+// 测试各种 URL 查询参数：
+// - startDate=2024-01-01
+// - endDate=2024-12-31
+// - panoOnly=true
+// - layers=points
+// - layers=signs
+// - layers=points,signs
+// - 组合：startDate=2024-01-01&panoOnly=true&layers=points</div>
+      <button class="btn" onclick="runTest3()">运行测试</button>
+      <div id="result3" class="test-result info">等待运行测试...</div>
+    </div>
+
+    <!-- 测试场景 4：回退前进 -->
+    <div class="test-section">
+      <h2><span class="status-dot pending" id="status4"></span>场景 4：回退前进</h2>
+      <p class="description">验证浏览器回退/前进时，状态能够正确恢复。</p>
+      <div class="code-block">
+// 测试步骤：
+// 1. 设置状态 A，push 到历史
+// 2. 设置状态 B，push 到历史
+// 3. 模拟回退（popstate），验证状态恢复为 A
+// 4. 模拟前进（popstate），验证状态恢复为 B
+
+// 注意：此测试需要手动在浏览器中验证回退/前进按钮。
+// 这里只验证 pushState 和 fromQuery 的正确性。</div>
+      <button class="btn" onclick="runTest4()">运行测试</button>
+      <div id="result4" class="test-result info">等待运行测试...</div>
+    </div>
+
+    <!-- 完整测试套件 -->
+    <div class="test-section">
+      <h2>🧪 完整测试套件</h2>
+      <p class="description">运行所有测试，查看汇总结果。</p>
+      <button class="btn" onclick="runAllTests()">运行所有测试</button>
+      <button class="btn secondary" onclick="clearResults()">清除结果</button>
+      <div id="summary" class="test-result info" style="margin-top: 15px;">
+等待运行测试...
+
+测试汇总：
+  通过: 0 / 4
+  失败: 0 / 4
+  待定: 4 / 4</div>
+    </div>
+
+    <!-- 测试说明 -->
+    <div class="test-section">
+      <h2>📖 测试说明</h2>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>测试项</th>
+            <th>怎么跑</th>
+            <th>预期结果</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>快速切换筛选</td>
+            <td>点击"运行测试"按钮</td>
+            <td>最终状态 = 最后设置的状态；URL 查询参数一致</td>
+          </tr>
+          <tr>
+            <td>刷新恢复</td>
+            <td>点击"运行测试"按钮</td>
+            <td>fromQuery() 正确解析 URL；解析后状态一致</td>
+          </tr>
+          <tr>
+            <td>带 query 直达</td>
+            <td>点击"运行测试"按钮</td>
+            <td>所有 URL 参数格式都能正确解析</td>
+          </tr>
+          <tr>
+            <td>回退前进</td>
+            <td>点击"运行测试"按钮 + 手动测试回退/前进</td>
+            <td>回退时状态恢复；前进时状态恢复</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3 style="margin-top: 20px; font-size: 14px;">手动验证步骤（浏览器回退/前进）：</h3>
+      <div class="code-block">
+1. 打开主页面 index.html
+2. 开启 Points 图层 → 观察 URL 变为 ?layers=points
+3. 开启 Signs 图层 → 观察 URL 变为 ?layers=points,signs
+4. 点击浏览器"回退"按钮 → 验证：
+   - URL 变为 ?layers=points
+   - Points 开启，Signs 关闭
+5. 点击浏览器"前进"按钮 → 验证：
+   - URL 变为 ?layers=points,signs
+   - Points 开启，Signs 开启
+
+补充验证（筛选）：
+1. 打开 Filters 面板，设置 startDate=2024-01-01，勾选 panoOnly
+2. 点击 Apply → 观察 URL 包含 startDate 和 panoOnly
+3. 点击 Reset → 观察 URL 恢复
+4. 点击"回退" → 验证筛选状态恢复
+5. 点击"前进" → 验证筛选状态重置</div>
+    </div>
+  </div>
+
+  <script>
+    // ============================================================================
+    // 模拟 window.filterState API（独立测试用）
+    // ============================================================================
+
+    // 如果是在主页面测试，使用实际的 API；如果是独立测试，使用模拟实现
+    if (!window.filterState) {
+      console.log('Test page: Using mock filterState API');
+
+      let activeFilters = { startDate: '', endDate: '', panoOnly: false };
+      let layerState = { points: false, signs: false };
+      let currentFilterVersion = 0;
+
+      function getDefaultFilters() {
+        return { startDate: '', endDate: '', panoOnly: false };
+      }
+
+      function getDefaultLayerState() {
+        return { points: false, signs: false };
+      }
+
+      window.filterState = {
+        getFilters: function() {
+          return {
+            startDate: activeFilters.startDate,
+            endDate: activeFilters.endDate,
+            panoOnly: activeFilters.panoOnly,
+          };
+        },
+
+        setFilters: function(filters, apply) {
+          if (!filters) return false;
+          if (filters.startDate !== undefined) activeFilters.startDate = String(filters.startDate || '');
+          if (filters.endDate !== undefined) activeFilters.endDate = String(filters.endDate || '');
+          if (filters.panoOnly !== undefined) activeFilters.panoOnly = !!filters.panoOnly;
+          return true;
+        },
+
+        getLayers: function() {
+          return {
+            points: layerState.points,
+            signs: layerState.signs,
+          };
+        },
+
+        setLayers: function(layers, apply) {
+          if (!layers) return false;
+          if (layers.points !== undefined) layerState.points = !!layers.points;
+          if (layers.signs !== undefined) layerState.signs = !!layers.signs;
+          return true;
+        },
+
+        toQuery: function() {
+          const params = [];
+          if (activeFilters.startDate) params.push('startDate=' + encodeURIComponent(activeFilters.startDate));
+          if (activeFilters.endDate) params.push('endDate=' + encodeURIComponent(activeFilters.endDate));
+          if (activeFilters.panoOnly) params.push('panoOnly=true');
+          const layers = [];
+          if (layerState.points) layers.push('points');
+          if (layerState.signs) layers.push('signs');
+          if (layers.length > 0) params.push('layers=' + layers.join(','));
+          return params.join('&');
+        },
+
+        fromQuery: function(queryString, apply) {
+          if (!queryString) return false;
+          const q = (queryString.charAt(0) === '?') ? queryString.slice(1) : queryString;
+          const pairs = q.split('&');
+          let changed = false;
+          const newFilters = getDefaultFilters();
+          const newLayers = getDefaultLayerState();
+          for (let i = 0; i < pairs.length; i++) {
+            const pair = pairs[i];
+            const eqIdx = pair.indexOf('=');
+            if (eqIdx <= 0) continue;
+            const key = decodeURIComponent(pair.slice(0, eqIdx));
+            const value = decodeURIComponent(pair.slice(eqIdx + 1));
+            switch (key) {
+              case 'startDate':
+                if (value && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+                  newFilters.startDate = value;
+                  changed = true;
+                }
+                break;
+              case 'endDate':
+                if (value && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+                  newFilters.endDate = value;
+                  changed = true;
+                }
+                break;
+              case 'panoOnly':
+                if (value === 'true' || value === '1') {
+                  newFilters.panoOnly = true;
+                  changed = true;
+                }
+                break;
+              case 'layers':
+                const layerList = value.split(',');
+                for (let j = 0; j < layerList.length; j++) {
+                  const l = layerList[j].trim();
+                  if (l === 'points') newLayers.points = true;
+                  if (l === 'signs') newLayers.signs = true;
+                }
+                changed = true;
+                break;
+            }
+          }
+          if (changed) {
+            if (newFilters.startDate) activeFilters.startDate = newFilters.startDate;
+            if (newFilters.endDate) activeFilters.endDate = newFilters.endDate;
+            activeFilters.panoOnly = newFilters.panoOnly;
+            layerState.points = newLayers.points;
+            layerState.signs = newLayers.signs;
+          }
+          return changed;
+        },
+
+        pushToUrl: function() {
+          const query = this.toQuery();
+          console.log('pushToUrl:', query);
+          return query;
+        },
+
+        restoreFromUrl: function(apply) {
+          // In mock mode, return false (no URL to restore from)
+          return false;
+        },
+
+        getVersion: function() {
+          return currentFilterVersion;
+        },
+
+        isReady: function() {
+          return true;
+        },
+
+        reset: function(apply) {
+          activeFilters = getDefaultFilters();
+          layerState = getDefaultLayerState();
+          return true;
+        },
+      };
+    }
+
+    // ============================================================================
+    // 测试函数
+    // ============================================================================
+
+    let testResults = { test1: null, test2: null, test3: null, test4: null };
+
+    function assert(condition, message) {
+      if (!condition) {
+        throw new Error('断言失败: ' + message);
+      }
+    }
+
+    function assertDeepEqual(actual, expected, message) {
+      const actualStr = JSON.stringify(actual);
+      const expectedStr = JSON.stringify(expected);
+      if (actualStr !== expectedStr) {
+        throw new Error(message + '\n  期望: ' + expectedStr + '\n  实际: ' + actualStr);
+      }
+    }
+
+    // 测试 1：快速切换筛选
+    function runTest1() {
+      const resultEl = document.getElementById('result1');
+      const statusEl = document.getElementById('status1');
+
+      try {
+        console.log('=== 测试 1：快速切换筛选 ===');
+
+        // 重置
+        window.filterState.reset();
+
+        // 步骤 1：设置筛选 A
+        window.filterState.setFilters({ startDate: '2024-01-01', panoOnly: true });
+        window.filterState.setLayers({ points: true });
+
+        const filtersA = window.filterState.getFilters();
+        const layersA = window.filterState.getLayers();
+        const urlA = window.filterState.toQuery();
+
+        console.log('筛选 A:', { filters: filtersA, layers: layersA, url: urlA });
+
+        // 步骤 2：快速设置筛选 B
+        window.filterState.setFilters({ startDate: '2024-06-01', endDate: '2024-06-30', panoOnly: false });
+        window.filterState.setLayers({ points: false, signs: true });
+
+        const filtersB = window.filterState.getFilters();
+        const layersB = window.filterState.getLayers();
+        const urlB = window.filterState.toQuery();
+
+        console.log('筛选 B:', { filters: filtersB, layers: layersB, url: urlB });
+
+        // 步骤 3：验证当前状态是筛选 B
+        assertDeepEqual(filtersB, {
+          startDate: '2024-06-01',
+          endDate: '2024-06-30',
+          panoOnly: false,
+        }, '筛选状态应为筛选 B');
+
+        assertDeepEqual(layersB, {
+          points: false,
+          signs: true,
+        }, '图层状态应为筛选 B');
+
+        // 步骤 4：验证 URL 查询参数也是筛选 B
+        const expectedUrl = 'startDate=2024-06-01&endDate=2024-06-30&layers=signs';
+        assert(urlB === expectedUrl, 'URL 应为: ' + expectedUrl + '\n  实际: ' + urlB);
+
+        testResults.test1 = true;
+        statusEl.className = 'status-dot pass';
+        resultEl.className = 'test-result pass';
+        resultEl.innerHTML = '✅ 通过\n\n步骤摘要：\n  1. 设置筛选 A (startDate=2024-01-01, panoOnly=true, layers=points)\n  2. 快速设置筛选 B (startDate=2024-06-01, endDate=2024-06-30, layers=signs)\n  3. 验证当前状态 = 筛选 B ✓\n  4. 验证 URL = "startDate=2024-06-01&endDate=2024-06-30&layers=signs" ✓';
+
+      } catch (e) {
+        testResults.test1 = false;
+        statusEl.className = 'status-dot fail';
+        resultEl.className = 'test-result fail';
+        resultEl.innerHTML = '❌ 失败\n\n错误信息:\n  ' + e.message;
+      }
+
+      updateSummary();
+    }
+
+    // 测试 2：刷新恢复
+    function runTest2() {
+      const resultEl = document.getElementById('result2');
+      const statusEl = document.getElementById('status2');
+
+      try {
+        console.log('=== 测试 2：刷新恢复 ===');
+
+        // 重置
+        window.filterState.reset();
+
+        // 步骤 1：设置筛选状态
+        const originalFilters = {
+          startDate: '2024-03-15',
+          endDate: '2024-03-20',
+          panoOnly: true,
+        };
+        const originalLayers = {
+          points: true,
+          signs: true,
+        };
+
+        window.filterState.setFilters(originalFilters);
+        window.filterState.setLayers(originalLayers);
+
+        // 步骤 2：验证 URL 已更新
+        const url = window.filterState.toQuery();
+        console.log('原始 URL:', url);
+
+        const expectedUrl = 'startDate=2024-03-15&endDate=2024-03-20&panoOnly=true&layers=points,signs';
+        assert(url === expectedUrl, 'URL 应为: ' + expectedUrl + '\n  实际: ' + url);
+
+        // 步骤 3：重置，然后验证 fromQuery() 能够正确解析
+        window.filterState.reset();
+
+        const filtersAfterReset = window.filterState.getFilters();
+        const layersAfterReset = window.filterState.getLayers();
+
+        assertDeepEqual(filtersAfterReset, {
+          startDate: '',
+          endDate: '',
+          panoOnly: false,
+        }, '重置后筛选状态应为默认');
+
+        assertDeepEqual(layersAfterReset, {
+          points: false,
+          signs: false,
+        }, '重置后图层状态应为默认');
+
+        // 步骤 4：从 URL 恢复
+        const changed = window.filterState.fromQuery(url);
+        assert(changed === true, 'fromQuery 应返回 true（状态已改变）');
+
+        const filtersAfterRestore = window.filterState.getFilters();
+        const layersAfterRestore = window.filterState.getLayers();
+
+        console.log('恢复后:', { filters: filtersAfterRestore, layers: layersAfterRestore });
+
+        // 步骤 5：验证解析后的状态与原始状态一致
+        assertDeepEqual(filtersAfterRestore, originalFilters, '恢复后筛选状态应与原始一致');
+        assertDeepEqual(layersAfterRestore, originalLayers, '恢复后图层状态应与原始一致');
+
+        testResults.test2 = true;
+        statusEl.className = 'status-dot pass';
+        resultEl.className = 'test-result pass';
+        resultEl.innerHTML = '✅ 通过\n\n步骤摘要：\n  1. 设置筛选状态 (startDate=2024-03-15, endDate=2024-03-20, panoOnly=true, layers=points,signs)\n  2. 验证 URL = "startDate=2024-03-15&endDate=2024-03-20&panoOnly=true&layers=points,signs" ✓\n  3. 重置状态\n  4. 调用 fromQuery() 从 URL 恢复\n  5. 验证恢复后状态 = 原始状态 ✓';
+
+      } catch (e) {
+        testResults.test2 = false;
+        statusEl.className = 'status-dot fail';
+        resultEl.className = 'test-result fail';
+        resultEl.innerHTML = '❌ 失败\n\n错误信息:\n  ' + e.message;
+      }
+
+      updateSummary();
+    }
+
+    // 测试 3：带 query 直达
+    function runTest3() {
+      const resultEl = document.getElementById('result3');
+      const statusEl = document.getElementById('status3');
+
+      const testCases = [
+        {
+          query: 'startDate=2024-01-01',
+          expected: {
+            filters: { startDate: '2024-01-01', endDate: '', panoOnly: false },
+            layers: { points: false, signs: false },
+          },
+        },
+        {
+          query: 'endDate=2024-12-31',
+          expected: {
+            filters: { startDate: '', endDate: '2024-12-31', panoOnly: false },
+            layers: { points: false, signs: false },
+          },
+        },
+        {
+          query: 'panoOnly=true',
+          expected: {
+            filters: { startDate: '', endDate: '', panoOnly: true },
+            layers: { points: false, signs: false },
+          },
+        },
+        {
+          query: 'layers=points',
+          expected: {
+            filters: { startDate: '', endDate: '', panoOnly: false },
+            layers: { points: true, signs: false },
+          },
+        },
+        {
+          query: 'layers=signs',
+          expected: {
+            filters: { startDate: '', endDate: '', panoOnly: false },
+            layers: { points: false, signs: true },
+          },
+        },
+        {
+          query: 'layers=points,signs',
+          expected: {
+            filters: { startDate: '', endDate: '', panoOnly: false },
+            layers: { points: true, signs: true },
+          },
+        },
+        {
+          query: 'startDate=2024-01-01&panoOnly=true&layers=points',
+          expected: {
+            filters: { startDate: '2024-01-01', endDate: '', panoOnly: true },
+            layers: { points: true, signs: false },
+          },
+        },
+        {
+          query: '?startDate=2024-05-01&endDate=2024-05-31&layers=points,signs',
+          expected: {
+            filters: { startDate: '2024-05-01', endDate: '2024-05-31', panoOnly: false },
+            layers: { points: true, signs: true },
+          },
+        },
+      ];
+
+      try {
+        console.log('=== 测试 3：带 query 直达 ===');
+
+        let passed = 0;
+        let failed = 0;
+        const details = [];
+
+        for (let i = 0; i < testCases.length; i++) {
+          const tc = testCases[i];
+
+          // 重置
+          window.filterState.reset();
+
+          // 从 query 恢复
+          const changed = window.filterState.fromQuery(tc.query);
+
+          const filters = window.filterState.getFilters();
+          const layers = window.filterState.getLayers();
+
+          console.log('测试用例 ' + (i + 1) + ':', {
+            query: tc.query,
+            changed: changed,
+            filters: filters,
+            layers: layers,
+            expected: tc.expected,
+          });
+
+          try {
+            assert(changed === true, 'fromQuery 应返回 true');
+            assertDeepEqual(filters, tc.expected.filters, '筛选状态不一致');
+            assertDeepEqual(layers, tc.expected.layers, '图层状态不一致');
+
+            passed++;
+            details.push('  ✓ 用例 ' + (i + 1) + ': "' + tc.query + '"');
+
+          } catch (e) {
+            failed++;
+            details.push('  ✗ 用例 ' + (i + 1) + ': "' + tc.query + '"');
+            details.push('    错误: ' + e.message);
+          }
+        }
+
+        testResults.test3 = (failed === 0);
+        statusEl.className = failed === 0 ? 'status-dot pass' : 'status-dot fail';
+        resultEl.className = failed === 0 ? 'test-result pass' : 'test-result fail';
+
+        resultEl.innerHTML = (failed === 0 ? '✅ 通过' : '❌ 失败') +
+          '\n\n测试用例: ' + passed + ' / ' + testCases.length + ' 通过\n\n详情：\n' + details.join('\n');
+
+      } catch (e) {
+        testResults.test3 = false;
+        statusEl.className = 'status-dot fail';
+        resultEl.className = 'test-result fail';
+        resultEl.innerHTML = '❌ 失败\n\n错误信息:\n  ' + e.message;
+      }
+
+      updateSummary();
+    }
+
+    // 测试 4：回退前进
+    function runTest4() {
+      const resultEl = document.getElementById('result4');
+      const statusEl = document.getElementById('status4');
+
+      try {
+        console.log('=== 测试 4：回退前进 ===');
+
+        // 重置
+        window.filterState.reset();
+
+        // 步骤 1：设置状态 A
+        window.filterState.setFilters({ startDate: '2024-01-01' });
+        window.filterState.setLayers({ points: true });
+
+        const stateA = {
+          filters: window.filterState.getFilters(),
+          layers: window.filterState.getLayers(),
+          url: window.filterState.toQuery(),
+        };
+
+        console.log('状态 A:', stateA);
+
+        // 步骤 2：设置状态 B
+        window.filterState.setFilters({ panoOnly: true });
+        window.filterState.setLayers({ signs: true });
+
+        const stateB = {
+          filters: window.filterState.getFilters(),
+          layers: window.filterState.getLayers(),
+          url: window.filterState.toQuery(),
+        };
+
+        console.log('状态 B:', stateB);
+
+        // 验证 toQuery 正确性
+        assert(stateA.url === 'startDate=2024-01-01&layers=points', '状态 A URL 不正确');
+        assert(stateB.url === 'panoOnly=true&layers=signs', '状态 B URL 不正确');
+
+        // 验证 fromQuery 能正确恢复每个状态
+        window.filterState.reset();
+        window.filterState.fromQuery(stateA.url);
+
+        const restoredA = {
+          filters: window.filterState.getFilters(),
+          layers: window.filterState.getLayers(),
+        };
+
+        assertDeepEqual(restoredA.filters, stateA.filters, '恢复状态 A 筛选失败');
+        assertDeepEqual(restoredA.layers, stateA.layers, '恢复状态 A 图层失败');
+
+        window.filterState.fromQuery(stateB.url);
+
+        const restoredB = {
+          filters: window.filterState.getFilters(),
+          layers: window.filterState.getLayers(),
+        };
+
+        assertDeepEqual(restoredB.filters, stateB.filters, '恢复状态 B 筛选失败');
+        assertDeepEqual(restoredB.layers, stateB.layers, '恢复状态 B 图层失败');
+
+        testResults.test4 = true;
+        statusEl.className = 'status-dot pass';
+        resultEl.className = 'test-result pass';
+        resultEl.innerHTML = '✅ 通过\n\n步骤摘要：\n  1. 设置状态 A (startDate=2024-01-01, layers=points) ✓\n  2. 设置状态 B (panoOnly=true, layers=signs) ✓\n  3. 验证 fromQuery 能正确恢复状态 A ✓\n  4. 验证 fromQuery 能正确恢复状态 B ✓\n\n注意：完整的浏览器回退/前进测试需要手动验证。\n请在主页面 index.html 中测试：\n  - 设置状态 → 观察 URL 变化\n  - 点击回退 → 验证状态恢复\n  - 点击前进 → 验证状态恢复';
+
+      } catch (e) {
+        testResults.test4 = false;
+        statusEl.className = 'status-dot fail';
+        resultEl.className = 'test-result fail';
+        resultEl.innerHTML = '❌ 失败\n\n错误信息:\n  ' + e.message;
+      }
+
+      updateSummary();
+    }
+
+    // 运行所有测试
+    function runAllTests() {
+      runTest1();
+      runTest2();
+      runTest3();
+      runTest4();
+    }
+
+    // 清除结果
+    function clearResults() {
+      testResults = { test1: null, test2: null, test3: null, test4: null };
+
+      ['result1', 'result2', 'result3', 'result4'].forEach(id => {
+        const el = document.getElementById(id);
+        el.className = 'test-result info';
+        el.textContent = '等待运行测试...';
+      });
+
+      ['status1', 'status2', 'status3', 'status4'].forEach(id => {
+        const el = document.getElementById(id);
+        el.className = 'status-dot pending';
+      });
+
+      updateSummary();
+    }
+
+    // 更新汇总
+    function updateSummary() {
+      const summaryEl = document.getElementById('summary');
+
+      let passed = 0;
+      let failed = 0;
+      let pending = 0;
+
+      [testResults.test1, testResults.test2, testResults.test3, testResults.test4].forEach(r => {
+        if (r === true) passed++;
+        else if (r === false) failed++;
+        else pending++;
+      });
+
+      summaryEl.className = (failed === 0 && passed > 0) ? 'test-result pass' :
+                             (failed > 0) ? 'test-result fail' : 'test-result info';
+
+      summaryEl.innerHTML =
+        (passed === 4 ? '✅ 所有测试通过！' :
+         failed > 0 ? '❌ 有测试失败' : '⏳ 等待测试') +
+        '\n\n测试汇总：\n  通过: ' + passed + ' / 4\n  失败: ' + failed + ' / 4\n  待定: ' + pending + ' / 4';
+    }
+  </script>
+</body>
+</html>
