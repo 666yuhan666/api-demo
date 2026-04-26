@@ -77,8 +77,11 @@ let activeFilters = {
   panoOnly: false,
 };
 
-// ─── Filter State Sync Helpers ────────────────────────────────────────────────
-// NEW: Unified functions to sync state ↔ UI
+// ─── Filter Versioning & Map Init State ───────────────────────────────────────
+// NEW: Version tracking to prevent race conditions in fast filter switches
+
+let currentFilterVersion = 0;
+let isMapReadyForLayers = false;
 
 function getDefaultFilters() {
   return {
@@ -137,6 +140,128 @@ function applyLayerToggles() {
   } else {
     removeExtraLayer('signs');
   }
+}
+
+function applyAllStateToMap() {
+  if (!map) return;
+  applyFiltersToLayers();
+  applyLayerToggles();
+  updateFiltersActiveState();
+}
+
+function createMainMapillaryLayers() {
+  if (!map) return;
+
+  const filterExpr = buildFilterExpression();
+
+  map.addLayer({
+    id: LAYER_OVW,
+    type: 'circle',
+    source: SOURCE_ID,
+    'source-layer': 'overview',
+    minzoom: 0,
+    maxzoom: 6,
+    layout: { visibility: 'none' },
+    paint: {
+      'circle-color': C_DOT,
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 0, 1.5, 5, 4],
+      'circle-opacity': 0.75,
+    },
+    filter: filterExpr || undefined,
+  });
+
+  map.addLayer({
+    id: LAYER_SEQ,
+    type: 'line',
+    source: SOURCE_ID,
+    'source-layer': 'sequence',
+    minzoom: 6,
+    layout: { 'line-cap': 'round', 'line-join': 'round', visibility: 'none' },
+    paint: {
+      'line-color': C_LINE,
+      'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1.5, 12, 3, 14, 2, 18, 3],
+      'line-opacity': 0.8,
+    },
+    filter: filterExpr || undefined,
+  });
+
+  map.addLayer({
+    id: LAYER_SEQ + '-hl',
+    type: 'line',
+    source: SOURCE_ID,
+    'source-layer': 'sequence',
+    minzoom: 6,
+    layout: { 'line-cap': 'round', 'line-join': 'round', visibility: 'none' },
+    paint: {
+      'line-color': C_LINE_HL,
+      'line-width': ['interpolate', ['linear'], ['zoom'], 6, 5, 12, 7, 14, 5, 18, 7],
+      'line-opacity': 0,
+    },
+    filter: ['==', 'id', ''],
+  });
+
+  map.addLayer({
+    id: LAYER_IMG,
+    type: 'circle',
+    source: SOURCE_ID,
+    'source-layer': 'image',
+    minzoom: 14,
+    layout: { visibility: 'none' },
+    paint: {
+      'circle-color': C_DOT,
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 14, 4, 18, 9],
+      'circle-opacity': 0.95,
+      'circle-stroke-color': '#fff',
+      'circle-stroke-width': 1.5,
+      'circle-stroke-opacity': 0.7,
+    },
+    filter: filterExpr || undefined,
+  });
+
+  map.addLayer({
+    id: LAYER_IMG + '-active',
+    type: 'circle',
+    source: SOURCE_ID,
+    'source-layer': 'image',
+    minzoom: 14,
+    layout: { visibility: 'none' },
+    paint: {
+      'circle-color': '#ff861b',
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 14, 6, 18, 13],
+      'circle-opacity': 1,
+      'circle-stroke-color': '#fff',
+      'circle-stroke-width': 2,
+      'circle-stroke-opacity': 1,
+    },
+    filter: ['==', 'id', -1],
+  });
+
+  map.addLayer({
+    id: LAYER_IMG + '-hl',
+    type: 'circle',
+    source: SOURCE_ID,
+    'source-layer': 'image',
+    minzoom: 14,
+    layout: { visibility: 'none' },
+    paint: {
+      'circle-color': C_DOT_HL,
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 14, 9, 18, 16],
+      'circle-opacity': ['case', ['boolean', ['feature-state', 'hover'], false], 0.5, 0],
+      'circle-stroke-color': '#fff',
+      'circle-stroke-width': 2,
+      'circle-stroke-opacity': ['case', ['boolean', ['feature-state', 'hover'], false], 0.9, 0],
+    },
+  });
+}
+
+function showAllMainLayers() {
+  if (!map) return;
+  const mainLayerIds = [LAYER_OVW, LAYER_SEQ, LAYER_SEQ + '-hl', LAYER_IMG, LAYER_IMG + '-active', LAYER_IMG + '-hl'];
+  mainLayerIds.forEach((id) => {
+    if (map.getLayer(id)) {
+      map.setLayoutProperty(id, 'visibility', 'visible');
+    }
+  });
 }
 
 // ─── Map event listener registry for cleanup ─────────────────────────────────
@@ -421,6 +546,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function initMap() {
   setStatus('loading', 'Loading map…');
+  isMapReadyForLayers = false;
   if (coneMarker)    { coneMarker.remove(); coneMarker = null; }
   if (featurePopup)  { featurePopup.remove(); featurePopup = null; }
   if (thumbPopupVisible) { thumbPopup.remove(); thumbPopupVisible = false; }
@@ -465,111 +591,20 @@ function onMapLoad() {
     attribution: '© <a href="https://www.mapillary.com" target="_blank">Mapillary</a>',
   });
 
-  // Overview
-  map.addLayer({
-    id: LAYER_OVW,
-    type: 'circle',
-    source: SOURCE_ID,
-    'source-layer': 'overview',
-    minzoom: 0,
-    maxzoom: 6,
-    paint: {
-      'circle-color': C_DOT,
-      'circle-radius': ['interpolate', ['linear'], ['zoom'], 0, 1.5, 5, 4],
-      'circle-opacity': 0.75,
-    },
-  });
+  syncLayerTogglesUI();
+  syncFiltersUI();
 
-  // Sequences
-  map.addLayer({
-    id: LAYER_SEQ,
-    type: 'line',
-    source: SOURCE_ID,
-    'source-layer': 'sequence',
-    minzoom: 6,
-    layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: {
-      'line-color': C_LINE,
-      'line-width': ['interpolate', ['linear'], ['zoom'], 6, 1.5, 12, 3, 14, 2, 18, 3],
-      'line-opacity': 0.8,
-    },
-  });
-
-  map.addLayer({
-    id: LAYER_SEQ + '-hl',
-    type: 'line',
-    source: SOURCE_ID,
-    'source-layer': 'sequence',
-    minzoom: 6,
-    layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: {
-      'line-color': C_LINE_HL,
-      'line-width': ['interpolate', ['linear'], ['zoom'], 6, 5, 12, 7, 14, 5, 18, 7],
-      'line-opacity': 0,
-    },
-    filter: ['==', 'id', ''],
-  });
-
-  // Images
-  map.addLayer({
-    id: LAYER_IMG,
-    type: 'circle',
-    source: SOURCE_ID,
-    'source-layer': 'image',
-    minzoom: 14,
-    paint: {
-      'circle-color': C_DOT,
-      'circle-radius': ['interpolate', ['linear'], ['zoom'], 14, 4, 18, 9],
-      'circle-opacity': 0.95,
-      'circle-stroke-color': '#fff',
-      'circle-stroke-width': 1.5,
-      'circle-stroke-opacity': 0.7,
-    },
-  });
-
-  // Active image orange highlight
-  map.addLayer({
-    id: LAYER_IMG + '-active',
-    type: 'circle',
-    source: SOURCE_ID,
-    'source-layer': 'image',
-    minzoom: 14,
-    paint: {
-      'circle-color': '#ff861b',
-      'circle-radius': ['interpolate', ['linear'], ['zoom'], 14, 6, 18, 13],
-      'circle-opacity': 1,
-      'circle-stroke-color': '#fff',
-      'circle-stroke-width': 2,
-      'circle-stroke-opacity': 1,
-    },
-    filter: ['==', 'id', -1],
-  });
-
-  // Image hover highlight (feature-state driven)
-  map.addLayer({
-    id: LAYER_IMG + '-hl',
-    type: 'circle',
-    source: SOURCE_ID,
-    'source-layer': 'image',
-    minzoom: 14,
-    paint: {
-      'circle-color': C_DOT_HL,
-      'circle-radius': ['interpolate', ['linear'], ['zoom'], 14, 9, 18, 16],
-      'circle-opacity': ['case', ['boolean', ['feature-state', 'hover'], false], 0.5, 0],
-      'circle-stroke-color': '#fff',
-      'circle-stroke-width': 2,
-      'circle-stroke-opacity': ['case', ['boolean', ['feature-state', 'hover'], false], 0.9, 0],
-    },
-  });
+  createMainMapillaryLayers();
 
   bindMapEvents();
   bindLayerToggles();
 
-  // CHANGED: Sync UI from state before applying
-  syncLayerTogglesUI();
   applyLayerToggles();
-  applyFiltersToLayers();
   updateFiltersActiveState();
+
+  showAllMainLayers();
+
+  isMapReadyForLayers = true;
 
   setStatus('ok', 'Map ready — click a green layer');
 }
@@ -593,16 +628,15 @@ function buildFilterExpression() {
 
 function applyFiltersToLayers() {
   if (!map) return;
+  currentFilterVersion++;
   const expr = buildFilterExpression();
   [LAYER_OVW, LAYER_SEQ, LAYER_IMG, LAYER_IMG + '-hl'].forEach((id) => {
     if (map.getLayer(id)) map.setFilter(id, expr || undefined);
   });
-  // Preserve active-image filter on top of global filter
   if (activeImageId && map.getLayer(LAYER_IMG + '-active')) {
     const idFilter = ['==', ['to-string', ['get', 'id']], String(activeImageId)];
     map.setFilter(LAYER_IMG + '-active', expr ? ['all', expr, idFilter] : idFilter);
   }
-  // If the active image is now hidden by the filter, remove the cone
   if (activeImageId && expr) {
     const isVisible = isImageVisibleUnderFilter(activeImageId, expr);
     if (!isVisible && coneMarker) {
