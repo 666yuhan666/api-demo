@@ -731,6 +731,10 @@ function bindLayerToggles() {
 
       applyFiltersToLayers();
       updateFiltersActiveState();
+
+      // Round 3: Push state to URL after applying filters
+      if (window.filterState) window.filterState.pushToUrl();
+
       filtersPanel.classList.remove('open');
       filtersToggle.dataset.active = 'false';
     });
@@ -748,6 +752,10 @@ function bindLayerToggles() {
 
       applyFiltersToLayers();
       updateFiltersActiveState();
+
+      // Round 3: Push state to URL after reset
+      if (window.filterState) window.filterState.pushToUrl();
+
       filtersPanel.classList.remove('open');
       filtersToggle.dataset.active = 'false';
     });
@@ -1514,3 +1522,235 @@ closeBtn.addEventListener('click', () => {
 window.addEventListener('resize', () => {
   if (map) map.resize();
 });
+
+// ============================================================================
+//  Round 3: Verifiable Filter State API + URL Persistence
+//  可验证函数：筛选状态读写、query序列化/反序列化、URL持久化
+// ============================================================================
+
+window.filterState = {
+  // ─── 筛选状态读写 ─────────────────────────────────────────────────────────
+
+  getFilters: function() {
+    return {
+      startDate: activeFilters.startDate,
+      endDate: activeFilters.endDate,
+      panoOnly: activeFilters.panoOnly,
+    };
+  },
+
+  setFilters: function(filters, apply) {
+    if (!filters) return false;
+    if (filters.startDate !== undefined) activeFilters.startDate = String(filters.startDate || '');
+    if (filters.endDate !== undefined) activeFilters.endDate = String(filters.endDate || '');
+    if (filters.panoOnly !== undefined) activeFilters.panoOnly = !!filters.panoOnly;
+    if (apply !== false) {
+      syncFiltersUI();
+      if (isMapReadyForLayers) {
+        applyFiltersToLayers();
+        updateFiltersActiveState();
+      }
+    }
+    return true;
+  },
+
+  getLayers: function() {
+    return {
+      points: layerState.points,
+      signs: layerState.signs,
+    };
+  },
+
+  setLayers: function(layers, apply) {
+    if (!layers) return false;
+    if (layers.points !== undefined) layerState.points = !!layers.points;
+    if (layers.signs !== undefined) layerState.signs = !!layers.signs;
+    if (apply !== false) {
+      syncLayerTogglesUI();
+      if (isMapReadyForLayers) {
+        applyLayerToggles();
+      }
+    }
+    return true;
+  },
+
+  // ─── Query 序列化/反序列化 ──────────────────────────────────────────────────
+
+  toQuery: function() {
+    const params = [];
+    if (activeFilters.startDate) params.push('startDate=' + encodeURIComponent(activeFilters.startDate));
+    if (activeFilters.endDate) params.push('endDate=' + encodeURIComponent(activeFilters.endDate));
+    if (activeFilters.panoOnly) params.push('panoOnly=true');
+    const layers = [];
+    if (layerState.points) layers.push('points');
+    if (layerState.signs) layers.push('signs');
+    if (layers.length > 0) params.push('layers=' + layers.join(','));
+    return params.join('&');
+  },
+
+  fromQuery: function(queryString, apply) {
+    if (!queryString) return false;
+    const q = (queryString.charAt(0) === '?') ? queryString.slice(1) : queryString;
+    const pairs = q.split('&');
+    let changed = false;
+    const newFilters = getDefaultFilters();
+    const newLayers = getDefaultLayerState();
+    for (let i = 0; i < pairs.length; i++) {
+      const pair = pairs[i];
+      const eqIdx = pair.indexOf('=');
+      if (eqIdx <= 0) continue;
+      const key = decodeURIComponent(pair.slice(0, eqIdx));
+      const value = decodeURIComponent(pair.slice(eqIdx + 1));
+      switch (key) {
+        case 'startDate':
+          if (value && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+            newFilters.startDate = value;
+            changed = true;
+          }
+          break;
+        case 'endDate':
+          if (value && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+            newFilters.endDate = value;
+            changed = true;
+          }
+          break;
+        case 'panoOnly':
+          if (value === 'true' || value === '1') {
+            newFilters.panoOnly = true;
+            changed = true;
+          }
+          break;
+        case 'layers':
+          const layerList = value.split(',');
+          for (let j = 0; j < layerList.length; j++) {
+            const l = layerList[j].trim();
+            if (l === 'points') newLayers.points = true;
+            if (l === 'signs') newLayers.signs = true;
+          }
+          changed = true;
+          break;
+      }
+    }
+    if (changed) {
+      if (newFilters.startDate) activeFilters.startDate = newFilters.startDate;
+      if (newFilters.endDate) activeFilters.endDate = newFilters.endDate;
+      activeFilters.panoOnly = newFilters.panoOnly;
+      layerState.points = newLayers.points;
+      layerState.signs = newLayers.signs;
+      if (apply !== false) {
+        syncFiltersUI();
+        syncLayerTogglesUI();
+        if (isMapReadyForLayers) {
+          applyFiltersToLayers();
+          applyLayerToggles();
+          updateFiltersActiveState();
+        }
+      }
+    }
+    return changed;
+  },
+
+  // ─── URL 持久化 ─────────────────────────────────────────────────────────────
+
+  pushToUrl: function() {
+    const query = this.toQuery();
+    const baseUrl = window.location.pathname;
+    const newUrl = query ? (baseUrl + '?' + query) : baseUrl;
+    if (window.history) {
+      window.history.pushState({
+        filters: this.getFilters(),
+        layers: this.getLayers(),
+      }, '', newUrl);
+    }
+  },
+
+  restoreFromUrl: function(apply) {
+    const query = window.location.search;
+    if (!query || query === '?') return false;
+    return this.fromQuery(query, apply);
+  },
+
+  // ─── 版本和状态检查 ─────────────────────────────────────────────────────────
+
+  getVersion: function() {
+    return currentFilterVersion;
+  },
+
+  isReady: function() {
+    return isMapReadyForLayers;
+  },
+
+  reset: function(apply) {
+    activeFilters = getDefaultFilters();
+    layerState = getDefaultLayerState();
+    if (apply !== false) {
+      syncFiltersUI();
+      syncLayerTogglesUI();
+      if (isMapReadyForLayers) {
+        applyFiltersToLayers();
+        applyLayerToggles();
+        updateFiltersActiveState();
+      }
+    }
+    return true;
+  },
+};
+
+// ─── 拦截状态变化，自动推送到 URL ───────────────────────────────────────────
+
+function pushStateToUrl() {
+  window.filterState.pushToUrl();
+}
+
+const originalToggleLayer = toggleLayer;
+toggleLayer = function(name) {
+  originalToggleLayer(name);
+  pushStateToUrl();
+};
+
+const originalApplyFiltersToLayers = applyFiltersToLayers;
+applyFiltersToLayers = function() {
+  originalApplyFiltersToLayers();
+};
+
+const originalSetFilters = window.filterState.setFilters.bind(window.filterState);
+window.filterState.setFilters = function(filters, apply) {
+  const result = originalSetFilters(filters, apply);
+  if (result && apply !== false) pushStateToUrl();
+  return result;
+};
+
+const originalSetLayers = window.filterState.setLayers.bind(window.filterState);
+window.filterState.setLayers = function(layers, apply) {
+  const result = originalSetLayers(layers, apply);
+  if (result && apply !== false) pushStateToUrl();
+  return result;
+};
+
+const originalReset = window.filterState.reset.bind(window.filterState);
+window.filterState.reset = function(apply) {
+  const result = originalReset(apply);
+  if (result && apply !== false) pushStateToUrl();
+  return result;
+};
+
+// ─── 监听浏览器回退/前进 ─────────────────────────────────────────────────────
+
+window.addEventListener('popstate', function(e) {
+  const state = e.state;
+  if (state && state.filters && state.layers) {
+    window.filterState.setFilters(state.filters, true);
+    window.filterState.setLayers(state.layers, true);
+  } else {
+    window.filterState.restoreFromUrl(true);
+  }
+});
+
+// ─── 页面加载时从 URL 恢复状态 ───────────────────────────────────────────────
+
+(function() {
+  const hasQuery = window.location.search && window.location.search !== '?';
+  if (hasQuery) {
+    window.filterState.restoreFromUrl(false);
+  }
+})();
