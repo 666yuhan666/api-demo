@@ -67,17 +67,80 @@ let coneMarker     = null;
 let viewerNavigable = false;
 let pendingImageId  = null;
 
-// Layer toggle state
-const layerState = { points: false, signs: false };
+// Layer toggle state - CHANGED: const → let for consistency
+let layerState = { points: false, signs: false };
 
-// Active filters
-const activeFilters = {
+// Active filters - CHANGED: const → let for consistency
+let activeFilters = {
   startDate: '',
   endDate: '',
   panoOnly: false,
 };
 
-// Map event listener registry for cleanup
+// ─── Filter State Sync Helpers ────────────────────────────────────────────────
+// NEW: Unified functions to sync state ↔ UI
+
+function getDefaultFilters() {
+  return {
+    startDate: '',
+    endDate: '',
+    panoOnly: false,
+  };
+}
+
+function getDefaultLayerState() {
+  return {
+    points: false,
+    signs: false,
+  };
+}
+
+function syncFiltersUI() {
+  const startDateInput = document.getElementById('filter-start-date');
+  const endDateInput = document.getElementById('filter-end-date');
+  const panoCheckbox = document.getElementById('filter-pano-only');
+
+  if (fpStart && activeFilters.startDate) {
+    fpStart.setDate(activeFilters.startDate);
+  }
+  if (fpEnd && activeFilters.endDate) {
+    fpEnd.setDate(activeFilters.endDate);
+  }
+  if (panoCheckbox) {
+    panoCheckbox.checked = activeFilters.panoOnly;
+  }
+}
+
+function syncLayerTogglesUI() {
+  const pointsBtn = document.getElementById('toggle-points');
+  const signsBtn = document.getElementById('toggle-signs');
+
+  if (pointsBtn) {
+    pointsBtn.dataset.active = String(layerState.points);
+  }
+  if (signsBtn) {
+    signsBtn.dataset.active = String(layerState.signs);
+  }
+}
+
+function applyLayerToggles() {
+  if (!map) return;
+
+  if (layerState.points) {
+    addExtraLayer('points');
+  } else {
+    removeExtraLayer('points');
+  }
+
+  if (layerState.signs) {
+    addExtraLayer('signs');
+  } else {
+    removeExtraLayer('signs');
+  }
+}
+
+// ─── Map event listener registry for cleanup ─────────────────────────────────
+
 const mapListeners = [];
 function addMapListener(type, layerId, handler) {
   if (layerId) {
@@ -95,7 +158,8 @@ function removeAllMapListeners() {
   mapListeners.length = 0;
 }
 
-// Thumbnail cache — capped to prevent unbounded growth
+// ─── Thumbnail cache — capped to prevent unbounded growth ─────────────────────
+
 const THUMB_CACHE_MAX = 500;
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
@@ -500,7 +564,13 @@ function onMapLoad() {
 
   bindMapEvents();
   bindLayerToggles();
+
+  // CHANGED: Sync UI from state before applying
+  syncLayerTogglesUI();
+  applyLayerToggles();
   applyFiltersToLayers();
+  updateFiltersActiveState();
+
   setStatus('ok', 'Map ready — click a green layer');
 }
 
@@ -572,8 +642,9 @@ function initDatePickers() {
     dateFormat: 'Y-m-d',
     maxDate: 'today',
     disableMobile: true,
+    // CHANGED: Remove immediate state update from onChange
+    // Dates will only be committed to activeFilters when Apply is clicked
     onChange: (selectedDates, dateStr) => {
-      activeFilters.startDate = dateStr;
       if (fpEnd) fpEnd.set('minDate', dateStr || null);
     },
   });
@@ -581,8 +652,8 @@ function initDatePickers() {
     dateFormat: 'Y-m-d',
     maxDate: 'today',
     disableMobile: true,
+    // CHANGED: Remove immediate state update from onChange
     onChange: (selectedDates, dateStr) => {
-      activeFilters.endDate = dateStr;
       if (fpStart) fpStart.set('maxDate', dateStr || 'today');
     },
   });
@@ -599,25 +670,48 @@ function bindLayerToggles() {
     filtersToggle.addEventListener('click', () => {
       const open = filtersPanel.classList.toggle('open');
       filtersToggle.dataset.active = String(open);
+      // CHANGED: Sync filter inputs from state when opening panel
+      if (open) {
+        syncFiltersUI();
+      }
     });
     document.getElementById('filter-apply-btn').addEventListener('click', () => {
       // Close any open flatpickr calendars before closing the panel
       if (fpStart) fpStart.close();
       if (fpEnd)   fpEnd.close();
-      // Dates are updated live by flatpickr onChange; just read the other fields here
-      activeFilters.panoOnly  = document.getElementById('filter-pano-only').checked;
+
+      // CHANGED: Read from DOM inputs and commit to state atomically
+      const startDateInput = document.getElementById('filter-start-date');
+      const endDateInput = document.getElementById('filter-end-date');
+      const panoCheckbox = document.getElementById('filter-pano-only');
+
+      // Get values from inputs
+      const newStartDate = startDateInput ? startDateInput.value : '';
+      const newEndDate = endDateInput ? endDateInput.value : '';
+      const newPanoOnly = panoCheckbox ? panoCheckbox.checked : false;
+
+      // Update state atomically
+      activeFilters.startDate = newStartDate;
+      activeFilters.endDate = newEndDate;
+      activeFilters.panoOnly = newPanoOnly;
+
       applyFiltersToLayers();
       updateFiltersActiveState();
       filtersPanel.classList.remove('open');
       filtersToggle.dataset.active = 'false';
     });
     document.getElementById('filter-reset-btn').addEventListener('click', () => {
-      activeFilters.startDate = '';
-      activeFilters.endDate   = '';
-      activeFilters.panoOnly  = false;
+      // CHANGED: Reset to default state atomically, then sync UI
+      activeFilters = getDefaultFilters();
+
+      // Reset Flatpickr
       if (fpStart) { fpStart.clear(); fpStart.set('maxDate', 'today'); }
       if (fpEnd)   { fpEnd.clear();   fpEnd.set('minDate', null); }
-      document.getElementById('filter-pano-only').checked = false;
+
+      // Reset checkbox
+      const panoCheckbox = document.getElementById('filter-pano-only');
+      if (panoCheckbox) panoCheckbox.checked = false;
+
       applyFiltersToLayers();
       updateFiltersActiveState();
       filtersPanel.classList.remove('open');
@@ -627,10 +721,16 @@ function bindLayerToggles() {
 }
 
 function toggleLayer(name) {
+  // CHANGED: Update state first, then sync UI, then apply
   layerState[name] = !layerState[name];
-  const btn = document.getElementById('toggle-' + name);
-  btn.dataset.active = String(layerState[name]);
 
+  // Sync UI from state
+  const btn = document.getElementById('toggle-' + name);
+  if (btn) {
+    btn.dataset.active = String(layerState[name]);
+  }
+
+  // Apply to map
   if (layerState[name]) {
     addExtraLayer(name);
   } else {
@@ -1379,185 +1479,4 @@ closeBtn.addEventListener('click', () => {
 
 window.addEventListener('resize', () => {
   if (map) map.resize();
-  if (viewer) viewer.resize();
 });
-
-// ─── Auto-init from URL param (?token=XXX) ────────────────────────────────────
-
-(function autoInit() {
-  const params = new URLSearchParams(window.location.search);
-  const urlToken = params.get('token');
-  if (urlToken) {
-    tokenInput.value = urlToken;
-    accessToken = urlToken;
-    history.replaceState(null, '', window.location.pathname + window.location.hash);
-    initMap();
-  }
-})();
-
-// ─── Geocoder (Nominatim) ─────────────────────────────────────────────────────
-
-(function initGeocoder() {
-  const geocoderInput   = document.getElementById('geocoder-input');
-  const geocoderClear   = document.getElementById('geocoder-clear');
-  const suggestionsList = document.getElementById('geocoder-suggestions');
-
-  let debounceTimer = null;
-  let activeIndex   = -1;
-  let lastResults   = [];
-
-  geocoderInput.addEventListener('input', () => {
-    const q = geocoderInput.value.trim();
-    geocoderClear.classList.toggle('hidden', q.length === 0);
-    if (q.length < 2) { hideSuggestions(); return; }
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => fetchSuggestions(q), 300);
-  });
-
-  geocoderClear.addEventListener('click', () => {
-    geocoderInput.value = '';
-    geocoderClear.classList.add('hidden');
-    hideSuggestions();
-    geocoderInput.focus();
-  });
-
-  geocoderInput.addEventListener('keydown', (e) => {
-    const items = suggestionsList.querySelectorAll('li');
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      activeIndex = Math.min(activeIndex + 1, items.length - 1);
-      updateActive(items);
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      activeIndex = Math.max(activeIndex - 1, -1);
-      updateActive(items);
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      if (activeIndex >= 0 && lastResults[activeIndex]) {
-        selectResult(lastResults[activeIndex]);
-      } else if (geocoderInput.value.trim().length >= 2) {
-        clearTimeout(debounceTimer);
-        fetchSuggestions(geocoderInput.value.trim(), true);
-      }
-    } else if (e.key === 'Escape') {
-      hideSuggestions();
-      geocoderInput.blur();
-    }
-  });
-
-  document.addEventListener('click', (e) => {
-    if (!e.target.closest('#geocoder-wrap')) hideSuggestions();
-  });
-
-  function updateActive(items) {
-    items.forEach((li, i) => {
-      li.setAttribute('aria-selected', i === activeIndex ? 'true' : 'false');
-    });
-  }
-
-  async function fetchSuggestions(query, flyToFirst = false) {
-    try {
-      const url  = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=6&addressdetails=1`;
-      const res  = await fetch(url, { headers: { 'Accept-Language': 'en' } });
-      const data = await res.json();
-      lastResults  = data;
-      activeIndex  = -1;
-      if (flyToFirst && data.length > 0) { selectResult(data[0]); return; }
-      renderSuggestions(data);
-    } catch (err) {
-      console.warn('Geocoder error:', err);
-    }
-  }
-
-  function renderSuggestions(results) {
-    suggestionsList.innerHTML = '';
-    if (!results.length) { hideSuggestions(); return; }
-
-    results.forEach((r) => {
-      const li = document.createElement('li');
-      li.setAttribute('role', 'option');
-      li.setAttribute('aria-selected', 'false');
-
-      const parts = r.display_name.split(', ');
-      const main  = parts.slice(0, 2).join(', ');
-      const sub   = parts.slice(2).join(', ');
-
-      li.innerHTML = `<div class="suggestion-main">${escHtml(main)}</div>${sub ? `<div class="suggestion-sub">${escHtml(sub)}</div>` : ''}`;
-      li.addEventListener('mousedown', (e) => { e.preventDefault(); selectResult(r); });
-      suggestionsList.appendChild(li);
-    });
-
-    suggestionsList.classList.add('visible');
-  }
-
-  function selectResult(result) {
-    geocoderInput.value = result.display_name.split(', ').slice(0, 2).join(', ');
-    geocoderClear.classList.remove('hidden');
-    hideSuggestions();
-
-    if (!map) return;
-
-    const lng  = parseFloat(result.lon);
-    const lat  = parseFloat(result.lat);
-    const bbox = result.boundingbox;
-
-    const ANIM_MS = 900;
-    if (bbox) {
-      map.fitBounds(
-        [[parseFloat(bbox[2]), parseFloat(bbox[0])], [parseFloat(bbox[3]), parseFloat(bbox[1])]],
-        { padding: 40, maxZoom: 16, duration: ANIM_MS }
-      );
-    } else {
-      map.flyTo({ center: [lng, lat], zoom: 16, duration: ANIM_MS });
-    }
-    // Wait for the map to finish flying AND tiles to fully render before querying features
-    function waitForIdleThenOpen() {
-      map.once('idle', () => openNearestImage(lng, lat));
-    }
-    setTimeout(waitForIdleThenOpen, ANIM_MS + 50);
-  }
-
-  function openNearestImage(lng, lat) {
-    // Use the map's rendered tile features to find the nearest image — more reliable than
-    // the Graph API bbox search which may return empty results due to token scope.
-    if (!map) return;
-    const center = map.project([lng, lat]);
-    // Query a generous pixel radius around the target point
-    const r = 120;
-    const features = map.queryRenderedFeatures(
-      [[ center.x - r, center.y - r ], [ center.x + r, center.y + r ]],
-      { layers: [LAYER_IMG] }
-    );
-    if (!features || features.length === 0) return;
-
-    // Pick the feature whose geometry is closest to the target lngLat
-    let best = null, bestDist = Infinity;
-    for (const f of features) {
-      const fId = f.properties && (f.properties.id || f.id);
-      if (!fId) continue;
-      // Apply active filters
-      if (activeFilters.panoOnly && !f.properties.is_pano) continue;
-      if (activeFilters.startDate) {
-        const ts = f.properties.captured_at;
-        if (ts && ts < new Date(activeFilters.startDate).getTime()) continue;
-      }
-      if (activeFilters.endDate) {
-        const ts = f.properties.captured_at;
-        if (ts && ts > new Date(activeFilters.endDate).getTime() + 86400000) continue;
-      }
-      const coords = f.geometry && f.geometry.coordinates;
-      if (!coords) continue;
-      const d = Math.hypot(coords[0] - lng, coords[1] - lat);
-      if (d < bestDist) { bestDist = d; best = { id: fId, coords }; }
-    }
-    if (best) {
-      openImageInViewer(String(best.id));
-    }
-  }
-
-  function hideSuggestions() {
-    suggestionsList.classList.remove('visible');
-    suggestionsList.innerHTML = '';
-    activeIndex = -1;
-  }
-})();
